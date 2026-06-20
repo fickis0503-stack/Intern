@@ -1,0 +1,1889 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>인턴 기록</title>
+<link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<style>
+  html, body { margin:0; padding:0; background:#fff; }
+  #__boot { font-family:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    text-align:center; color:#8c8c8c; padding-top:120px; font-size:14px; line-height:1.7; }
+  #__boot .err { color:#c00; font-size:13px; max-width:520px; margin:14px auto 0; text-align:left;
+    white-space:pre-wrap; border:1px solid #f0c0c0; padding:12px 14px; background:#fff8f8; }
+</style>
+</head>
+<body>
+<div id="root"><div id="__boot">불러오는 중…<div id="__bootmsg"></div></div></div>
+
+<script>
+// CDN 로딩/실행 중 에러를 화면에 표시 (콘솔 못 봐도 원인 확인 가능)
+window.__bootError = function(msg){
+  var b = document.getElementById("__boot");
+  if(b){ b.innerHTML = '앱을 불러오지 못했어요.<div class="err">' + msg + '</div>'; }
+};
+window.addEventListener("error", function(e){
+  if(!window.__mounted){ window.__bootError((e.message||"오류") + "\n" + (e.filename||"")); }
+});
+</script>
+
+<!-- React 18 (production). 한 곳이 막힐 때를 대비해 onerror 폴백 포함 -->
+<script
+  src="https://unpkg.com/react@18/umd/react.production.min.js"
+  onerror="window.__cdn1=1"></script>
+<script
+  src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+  onerror="window.__cdn2=1"></script>
+
+<script>
+(function(){
+  if (window.__cdn1 || window.__cdn2 || typeof React === "undefined" || typeof ReactDOM === "undefined") {
+    window.__bootError("React 라이브러리를 불러오지 못했습니다. (네트워크/방화벽으로 unpkg.com 접속이 막혔을 수 있어요)\n다른 네트워크(휴대폰 데이터 등)에서 다시 시도해 보세요.");
+    return;
+  }
+  try {
+//==== 컴파일된 앱 코드 시작 ====
+const {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback
+} = React;
+
+// ── Supabase 연결 설정 ─────────────────────────────────────────
+const SUPABASE_URL = "https://ewgmtccwxonljitmsplh.supabase.co";
+const SUPABASE_KEY = "sb_publishable_YJl0J6Hj4FjuTAmhm-tm1w_e7lelui-";
+const TABLE = "internlog";
+const K_SPACE = "log:space"; // 비밀 키(공간)는 이 기기에 기억
+
+// window.storage 폴리필 (localStorage 기반) — 일반 브라우저/GitHub Pages 호환
+if (typeof window !== "undefined" && !window.storage) {
+  window.storage = {
+    get: async k => {
+      const v = localStorage.getItem(k);
+      return v === null ? null : {
+        value: v
+      };
+    },
+    set: async (k, v) => {
+      localStorage.setItem(k, v);
+    },
+    remove: async k => {
+      localStorage.removeItem(k);
+    }
+  };
+}
+
+// Supabase REST 호출 헬퍼
+const sbHeaders = () => ({
+  "apikey": SUPABASE_KEY,
+  "Authorization": `Bearer ${SUPABASE_KEY}`,
+  "Content-Type": "application/json"
+});
+
+// 내 공간(row) 읽기: 없으면 null
+async function sbLoad(space) {
+  const url = `${SUPABASE_URL}/rest/v1/${TABLE}?space=eq.${encodeURIComponent(space)}&select=data`;
+  const res = await fetch(url, {
+    headers: sbHeaders()
+  });
+  if (!res.ok) throw new Error("load failed: " + res.status);
+  const rows = await res.json();
+  return rows.length ? rows[0].data : null;
+}
+
+// 내 공간(row) 저장: upsert
+async function sbSave(space, data) {
+  const url = `${SUPABASE_URL}/rest/v1/${TABLE}?on_conflict=space`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...sbHeaders(),
+      "Prefer": "resolution=merge-duplicates,return=minimal"
+    },
+    body: JSON.stringify({
+      space,
+      data,
+      updated_at: new Date().toISOString()
+    })
+  });
+  if (!res.ok) throw new Error("save failed: " + res.status);
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+
+// 고정 카테고리 (프로젝트와 동등 레벨, 단일 칸)
+const FIXED = [{
+  id: "__news__",
+  name: "뉴스스크랩"
+}, {
+  id: "__etc__",
+  name: "기타 업무"
+}, {
+  id: "__study__",
+  name: "개인 공부"
+}];
+// 개인 영역 (업무와 분리, 맨 하단)
+const PERSONAL = [{
+  id: "__personal__",
+  name: "개인 노트"
+}];
+const ALL_CATS = [...FIXED, ...PERSONAL];
+const isFixed = id => ALL_CATS.some(f => f.id === id);
+const isFreeform = id => id === "__study__" || id === "__personal__";
+const catName = (id, projects) => {
+  const f = ALL_CATS.find(x => x.id === id);
+  if (f) return f.name;
+  const p = (projects || []).find(x => x.id === id);
+  return p ? p.name : null;
+};
+
+// ── App ────────────────────────────────────────────────────────
+function InternLog() {
+  const [loading, setLoading] = useState(true);
+  const [space, setSpace] = useState(""); // 비밀 키(공간)
+  const [needSpace, setNeedSpace] = useState(false); // 키 입력 화면 표시 여부
+  const [errMsg, setErrMsg] = useState("");
+  const [projects, setProjects] = useState([]);
+  const [entries, setEntries] = useState([]);
+  const [todos, setTodos] = useState([]);
+  const [files, setFiles] = useState({}); // { [projectId]: [ {…} ] }
+  const [view, setView] = useState({
+    name: "home"
+  });
+  const [toast, setToast] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const showToast = useCallback(m => {
+    setToast(m);
+    setTimeout(() => setToast(""), 1800);
+  }, []);
+
+  // ── 데이터 적용 헬퍼 ─────────────────────────────────────────
+  const applyData = useCallback(data => {
+    const projList = Array.isArray(data?.projects) ? data.projects : [];
+    const entryList = Array.isArray(data?.entries) ? data.entries.slice() : [];
+    const todoList = Array.isArray(data?.todos) ? data.todos : [];
+    const fileMap = data?.files && typeof data.files === "object" ? data.files : {};
+    entryList.sort((a, b) => a.date < b.date ? 1 : -1);
+    setProjects(projList);
+    setEntries(entryList);
+    setTodos(todoList);
+    setFiles(fileMap);
+  }, []);
+
+  // ── 공간 로드 ────────────────────────────────────────────────
+  const loadSpace = useCallback(async key => {
+    setLoading(true);
+    setErrMsg("");
+    try {
+      const data = await sbLoad(key);
+      applyData(data || {});
+      setSpace(key);
+      setNeedSpace(false);
+      try {
+        await window.storage.set(K_SPACE, key);
+      } catch {}
+    } catch (e) {
+      console.error(e);
+      setErrMsg("Supabase에 연결하지 못했어요.\n" + "· Supabase 프로젝트가 켜져 있는지(무료 플랜은 미사용 시 자동 일시정지)\n" + "· internlog 테이블과 정책(SQL)이 적용됐는지\n" + "확인 후 다시 시도해 주세요.\n\n(" + (e?.message || e) + ")");
+      setNeedSpace(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [applyData]);
+
+  // ── 최초 진입: 저장된 공간 키가 있으면 자동 로드, 없으면 입력 화면 ──
+  useEffect(() => {
+    (async () => {
+      let saved = "";
+      try {
+        const r = await window.storage.get(K_SPACE);
+        if (r) saved = r.value;
+      } catch {}
+      if (saved) {
+        await loadSpace(saved);
+      } else {
+        setNeedSpace(true);
+        setLoading(false);
+      }
+    })();
+  }, [loadSpace]);
+
+  // ── 전체 저장 (현재 메모리 상태를 Supabase에 통째로 upsert) ──
+  const persistAll = useCallback(async next => {
+    if (!space) return;
+    const payload = {
+      version: 3,
+      projects: next.projects ?? projects,
+      entries: next.entries ?? entries,
+      todos: next.todos ?? todos,
+      files: next.files ?? files
+    };
+    setSyncing(true);
+    try {
+      await sbSave(space, payload);
+    } catch (e) {
+      console.error(e);
+      showToast("저장 실패 — 네트워크를 확인해 주세요");
+    } finally {
+      setSyncing(false);
+    }
+  }, [space, projects, entries, todos, files, showToast]);
+
+  // ── Persist (상태 갱신 + 서버 저장) ──────────────────────────
+  const saveProjects = useCallback(async next => {
+    setProjects(next);
+    await persistAll({
+      projects: next
+    });
+  }, [persistAll]);
+  const saveEntry = useCallback(async entry => {
+    const exists = entries.some(e => e.id === entry.id);
+    const next = exists ? entries.map(e => e.id === entry.id ? entry : e) : [entry, ...entries];
+    next.sort((a, b) => a.date < b.date ? 1 : -1);
+    setEntries(next);
+    await persistAll({
+      entries: next
+    });
+  }, [entries, persistAll]);
+  const deleteEntry = useCallback(async id => {
+    const next = entries.filter(e => e.id !== id);
+    setEntries(next);
+    await persistAll({
+      entries: next
+    });
+  }, [entries, persistAll]);
+  const saveTodos = useCallback(async next => {
+    setTodos(next);
+    await persistAll({
+      todos: next
+    });
+  }, [persistAll]);
+
+  // 프로젝트별 첨부 저장 (App이 통합 관리)
+  const saveFiles = useCallback(async (pid, list) => {
+    const next = {
+      ...files,
+      [pid]: list
+    };
+    setFiles(next);
+    await persistAll({
+      files: next
+    });
+  }, [files, persistAll]);
+
+  // ── Export ───────────────────────────────────────────────────
+  const download = (content, type, ext) => {
+    const blob = new Blob([content], {
+      type
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `intern-log-${todayStr()}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
+  const exportJSON = useCallback(async () => {
+    download(JSON.stringify({
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      projects,
+      entries,
+      todos,
+      files
+    }, null, 2), "application/json", "json");
+    showToast("백업 내보내기 완료");
+  }, [projects, entries, todos, files, showToast]);
+  const importJSON = useCallback(async file => {
+    if (!file) return;
+    let data;
+    try {
+      const text = await file.text();
+      data = JSON.parse(text);
+    } catch {
+      showToast("파일을 읽을 수 없어요 (.json 확인)");
+      return;
+    }
+    if (!data || !Array.isArray(data.entries) || !Array.isArray(data.projects)) {
+      showToast("백업 형식이 아니에요");
+      return;
+    }
+    const ok = window.confirm("백업을 불러오면 지금 이 공간의 기록이 백업 내용으로 덮어쓰기 됩니다. 진행할까요?");
+    if (!ok) return;
+    try {
+      const nextProjects = data.projects;
+      const nextTodos = Array.isArray(data.todos) ? data.todos : [];
+      const nextEntries = data.entries.slice().sort((a, b) => a.date < b.date ? 1 : -1);
+      const nextFiles = data.files && typeof data.files === "object" ? data.files : {};
+      setProjects(nextProjects);
+      setTodos(nextTodos);
+      setEntries(nextEntries);
+      setFiles(nextFiles);
+      await persistAll({
+        projects: nextProjects,
+        todos: nextTodos,
+        entries: nextEntries,
+        files: nextFiles
+      });
+      showToast("백업 불러오기 완료");
+    } catch (e) {
+      console.error(e);
+      showToast("불러오기 중 오류가 났어요");
+    }
+  }, [persistAll, showToast]);
+  const exportText = useCallback(() => {
+    const lines = [];
+    const groups = [...FIXED, ...projects];
+    for (const p of groups) {
+      const es = entries.filter(e => e.projectId === p.id);
+      if (!es.length) continue;
+      lines.push(`■ ${p.name}`);
+      for (const e of es) {
+        lines.push(`  · [${e.date}] ${e.title}`);
+        if (e.note) lines.push(`    ${e.note.replace(/\n/g, "\n    ")}`);
+        if (e.company) lines.push(`    대상회사: ${e.company}`);
+        if (e.companyOverview) lines.push(`    대상회사 개요: ${e.companyOverview}`);
+        if (e.acquirer) lines.push(`    인수자: ${e.acquirer}`);
+        if (e.dealSummary) lines.push(`    거래 요약: ${e.dealSummary}`);
+        if (e.link) lines.push(`    기사 링크: ${e.link}`);
+        if (e.task) lines.push(`    맡은 일: ${e.task}`);
+        if (e.result) lines.push(`    결과: ${e.result}`);
+        if (e.feedback) lines.push(`    피드백: ${e.feedback}`);
+        if (e.learned) lines.push(`    느낀 점: ${e.learned}`);
+        if (e.skills) lines.push(`    역량: ${e.skills}`);
+        lines.push("");
+      }
+      lines.push("");
+    }
+    download(lines.join("\n"), "text/plain", "txt");
+    showToast("자소서용 텍스트 완료");
+  }, [projects, entries, showToast]);
+  const css = `
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  .wrap {
+    --ink:#0d0d0d; --paper:#ffffff; --line:#e6e6e6; --line2:#111;
+    --muted:#8c8c8c; --soft:#f4f4f4; --card:#ffffff;
+    font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',system-ui,sans-serif;
+    background:var(--paper); color:var(--ink); min-height:100vh;
+    max-width:760px; margin:0 auto; padding:0 18px 96px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .topbar {
+    position:sticky; top:0; z-index:5; background:var(--paper);
+    padding:24px 0 14px; border-bottom:2px solid var(--ink);
+    display:flex; align-items:baseline; gap:12px;
+  }
+  .brand { font-size:21px; font-weight:800; letter-spacing:-0.03em; }
+  .sync { font-size:11px; color:var(--muted); margin-left:auto; display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:0.08em;}
+  .sync::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--ink); }
+  .back { background:none; border:none; color:var(--ink); font-size:13px; font-weight:700; cursor:pointer; padding:0; margin:18px 0 6px; letter-spacing:0.02em;}
+  h2.sec { font-size:12px; text-transform:uppercase; letter-spacing:0.16em; color:var(--ink); margin:28px 0 14px; font-weight:800; border-bottom:1px solid var(--line); padding-bottom:8px;}
+
+  /* Calendar */
+  .calhead { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .calhead .mo { font-size:18px; font-weight:800; letter-spacing:-0.01em;}
+  .calhead button { background:none; border:1px solid var(--ink); width:30px; height:30px; border-radius:0; cursor:pointer; font-size:15px; font-weight:700;}
+  .calhead button:hover { background:var(--ink); color:#fff; }
+  .calhead .today { width:auto; padding:0 12px; font-size:12px; }
+  .grid { display:grid; grid-template-columns:repeat(7,1fr); border-top:1px solid var(--line); border-left:1px solid var(--line);}
+  .wd { text-align:center; font-size:11px; font-weight:700; color:var(--muted); padding:7px 0; border-right:1px solid var(--line); border-bottom:1px solid var(--line);}
+  .wd:first-child { color:var(--ink); }
+  .cell {
+    min-height:74px; border-right:1px solid var(--line); border-bottom:1px solid var(--line);
+    padding:5px 5px; cursor:pointer; position:relative; background:var(--card); text-align:left;
+    display:flex; flex-direction:column; gap:3px; overflow:hidden;
+  }
+  .cell:hover { background:var(--soft); }
+  .cell.empty { background:#fafafa; cursor:default; }
+  .cell.today { outline:2px solid var(--ink); outline-offset:-2px; }
+  .cell .dnum { font-size:12px; font-weight:600; display:flex; align-items:center; gap:4px; }
+  .cell.sun .dnum { color:#000; }
+  .duelist { display:flex; flex-direction:column; gap:2px; margin-top:1px; }
+  .duechip {
+    font-size:9.5px; line-height:1.25; font-weight:600; background:var(--ink); color:#fff;
+    padding:1px 4px; border-radius:2px; max-width:100%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .duechip.done { background:#fff; color:var(--muted); border:1px solid var(--line); text-decoration:line-through; }
+  .dproj { font-weight:800; margin-right:3px; opacity:0.85; }
+  .duemore { font-size:9.5px; color:var(--muted); font-weight:700; padding-left:2px; }
+  .dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+  .dot.work { background:var(--ink); }
+  .legend { display:flex; gap:16px; margin-top:10px; font-size:11.5px; color:var(--muted); flex-wrap:wrap; }
+  .legend span { display:flex; align-items:center; gap:6px; }
+  .legend .duechip { font-size:10px; }
+
+  /* Day panel */
+  .daypanel { border:2px solid var(--ink); padding:16px; margin-top:14px; }
+  .daypanel h3 { font-size:15px; font-weight:800; margin:0 0 12px; }
+  .di { padding:9px 0; border-bottom:1px solid var(--line); cursor:pointer; display:flex; align-items:center; gap:9px;}
+  .di:last-of-type { border-bottom:none; }
+  .di .ic { font-size:11px; font-weight:800; border:1px solid var(--ink); padding:1px 6px; letter-spacing:0.05em;}
+  .di .ic.due { background:var(--ink); color:#fff; }
+  .di .tt { font-size:14px; font-weight:600; flex:1;}
+  .di .chk { width:18px; height:18px; border:1.5px solid var(--ink); display:flex; align-items:center; justify-content:center; font-size:11px; flex-shrink:0;}
+  .di.done .tt { text-decoration:line-through; color:var(--muted); }
+  .quickadd { display:flex; gap:8px; margin-top:12px; }
+  .quickadd input { flex:1; }
+
+  /* Project cards */
+  .pcards { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .pcard { background:var(--card); border:1px solid var(--ink); padding:15px; cursor:pointer; text-align:left; transition:background .12s; position:relative;}
+  .pcard:hover { background:var(--ink); }
+  .pcard:hover .pn, .pcard:hover .pc { color:#fff; }
+  .pcard:hover .pdesc { color:#ccc; }
+  .pcard .pn { font-weight:800; font-size:15px; margin-bottom:4px; }
+  .pcard .pdesc { font-size:11.5px; color:var(--muted); line-height:1.4; margin-bottom:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .pdesc-full { font-size:13.5px; color:#555; line-height:1.5; margin:4px 0 0; }
+  .pcard .pc { font-size:12px; color:var(--muted); }
+  .addp { border:1px dashed var(--ink); background:transparent; color:var(--ink); padding:15px; cursor:pointer; font-size:14px; font-weight:700; }
+  .addp:hover { background:var(--soft); }
+  .pcard.fixedcard { background:var(--ink); }
+  .pcard.fixedcard .pn { color:#fff; }
+  .pcard.fixedcard .pc { color:#bbb; }
+  .pcard.fixedcard:hover { background:#333; }
+  h2.sec.personal { color:var(--muted); }
+  .pcard.personalcard { background:#fff; border:1.5px solid var(--ink); border-style:dotted; }
+  .pcard.personalcard:hover { background:var(--soft); }
+  .pcard.personalcard .pn { color:var(--ink); }
+
+  /* Entry list */
+  .entry { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--ink); padding:13px 15px; margin-bottom:9px; cursor:pointer; transition:background .12s; }
+  .entry:hover { background:var(--soft); }
+  .entry .et { font-weight:700; font-size:15px; margin-bottom:4px; }
+  .entry .ed { font-size:12px; color:var(--muted); display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .entry .tag { background:var(--ink); color:#fff; padding:2px 8px; font-size:11px; font-weight:600; }
+  .entry .duetag { border:1px solid var(--ink); color:var(--ink); padding:2px 8px; font-size:11px; font-weight:700;}
+  .empty { text-align:center; color:var(--muted); padding:44px 0; font-size:14px; line-height:1.7;}
+
+  /* Attachments */
+  .attachbox { border:1px solid var(--line); padding:14px; }
+  .hintsmall { font-size:11.5px; color:var(--muted); margin-left:10px; }
+  .fileitem { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-left:3px solid var(--ink); padding:11px 13px; margin-top:9px; }
+  .fic { font-size:10.5px; font-weight:800; border:1px solid var(--ink); padding:1px 6px; letter-spacing:0.04em; flex-shrink:0; }
+  .fname { font-size:14px; font-weight:600; flex:1; cursor:pointer; word-break:break-all; }
+  .fname:hover { text-decoration:underline; }
+  .fmeta { font-size:11.5px; color:var(--muted); flex-shrink:0; }
+  .factions { display:flex; gap:6px; flex-shrink:0; }
+  .factions button { background:none; border:1px solid var(--line); font-size:11.5px; font-weight:600; padding:3px 8px; cursor:pointer; font-family:inherit; }
+  .factions button:hover { background:var(--ink); color:#fff; border-color:var(--ink); }
+
+  /* Forms */
+  label.f { display:block; font-size:12px; font-weight:800; color:var(--ink); margin:18px 0 6px; letter-spacing:0.03em; text-transform:uppercase;}
+  label.f .hint { font-weight:500; color:var(--muted); margin-left:6px; text-transform:none; letter-spacing:0;}
+  input.f, textarea.f, select.f { width:100%; border:1px solid var(--ink); border-radius:0; padding:11px 13px; font-size:14.5px; font-family:inherit; background:var(--card); color:var(--ink); resize:vertical;}
+  input.f:focus, textarea.f:focus, select.f:focus { outline:2px solid var(--ink); outline-offset:-1px; }
+  textarea.f { min-height:68px; line-height:1.55; }
+  .btn { border:1px solid var(--ink); border-radius:0; padding:11px 18px; font-size:13.5px; font-weight:700; cursor:pointer; font-family:inherit; letter-spacing:0.02em;}
+  .btn.primary { background:var(--ink); color:#fff; }
+  .btn.primary:hover { background:#333; }
+  .btn.ghost { background:#fff; color:var(--ink); }
+  .btn.ghost:hover { background:var(--soft); }
+  .btn.danger { background:#fff; color:var(--ink); border-style:dashed; }
+  .btn:disabled { opacity:.4; cursor:default; }
+  .row { display:flex; gap:9px; flex-wrap:wrap; }
+
+  .fab { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); display:flex; gap:10px; z-index:10; }
+  .fab .btn { box-shadow:0 3px 14px rgba(0,0,0,.18); }
+  .toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 18px; font-size:13px; font-weight:600; z-index:20; }
+  .starnote { font-size:12px; color:var(--muted); margin:8px 0 0; line-height:1.6;}
+
+  /* Read mode */
+  .rmeta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; color:var(--muted); margin:6px 0 6px; }
+  .rcat { background:var(--ink); color:#fff; padding:2px 9px; font-size:11.5px; font-weight:700; }
+  .rtitle { font-size:23px; font-weight:800; letter-spacing:-0.02em; margin:0 0 8px; line-height:1.3; }
+  .rfield { border-top:1px solid var(--line); padding:14px 0; }
+  .rlabel { font-size:11.5px; font-weight:800; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:6px; }
+  .rvalue { font-size:15px; line-height:1.65; white-space:pre-wrap; word-break:break-word; }
+  .rlink { color:var(--ink); text-decoration:underline; word-break:break-all; }
+  .rskills { display:flex; gap:6px; flex-wrap:wrap; }
+  @media (prefers-reduced-motion: reduce){ * { animation:none !important; transition:none !important; } }
+  `;
+  if (loading) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "wrap"
+    }, /*#__PURE__*/React.createElement("style", null, css), /*#__PURE__*/React.createElement("div", {
+      className: "empty",
+      style: {
+        paddingTop: 120
+      }
+    }, "불러오는 중…"));
+  }
+  if (needSpace) {
+    return /*#__PURE__*/React.createElement(SpaceGate, {
+      onEnter: loadSpace,
+      css: css,
+      errMsg: errMsg
+    });
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "wrap"
+  }, /*#__PURE__*/React.createElement("style", null, css), /*#__PURE__*/React.createElement("div", {
+    className: "topbar"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "brand"
+  }, "인턴 기록"), /*#__PURE__*/React.createElement("span", {
+    className: "sync"
+  }, syncing ? "동기화 중…" : "클라우드 동기화")), view.name === "home" && /*#__PURE__*/React.createElement(HomeView, {
+    projects: projects,
+    entries: entries,
+    todos: todos,
+    onOpenProject: id => setView({
+      name: "project",
+      id
+    }),
+    onAddProject: p => saveProjects([...projects, p]),
+    onNewEntry: date => setView({
+      name: "edit",
+      entry: date ? {
+        date
+      } : null
+    }),
+    onToggleTodo: id => saveTodos(todos.map(t => t.id === id ? {
+      ...t,
+      done: !t.done
+    } : t)),
+    onAddTodo: (date, title) => saveTodos([...todos, {
+      id: uid(),
+      date,
+      title,
+      done: false
+    }]),
+    onDeleteTodo: id => saveTodos(todos.filter(t => t.id !== id)),
+    onOpenEntry: entry => setView({
+      name: "read",
+      entry
+    }),
+    onExportJSON: exportJSON,
+    onExportText: exportText,
+    onImportJSON: importJSON
+  }), view.name === "project" && /*#__PURE__*/React.createElement(ProjectView, {
+    project: ALL_CATS.find(f => f.id === view.id) || projects.find(p => p.id === view.id),
+    fixed: isFixed(view.id),
+    entries: entries.filter(e => e.projectId === view.id),
+    files: files[view.id] || [],
+    onSaveFiles: list => saveFiles(view.id, list),
+    onBack: () => setView({
+      name: "home"
+    }),
+    onOpenEntry: entry => setView({
+      name: "read",
+      entry
+    }),
+    onNewEntry: () => setView({
+      name: "edit",
+      entry: {
+        projectId: view.id
+      }
+    }),
+    onRename: async (name, desc) => saveProjects(projects.map(p => p.id === view.id ? {
+      ...p,
+      name,
+      desc
+    } : p)),
+    onDeleteProject: async () => {
+      const nextProjects = projects.filter(p => p.id !== view.id);
+      const nextEntries = entries.filter(e => e.projectId !== view.id);
+      const nextFiles = {
+        ...files
+      };
+      delete nextFiles[view.id];
+      setProjects(nextProjects);
+      setEntries(nextEntries);
+      setFiles(nextFiles);
+      await persistAll({
+        projects: nextProjects,
+        entries: nextEntries,
+        files: nextFiles
+      });
+      setView({
+        name: "home"
+      });
+    }
+  }), view.name === "read" && /*#__PURE__*/React.createElement(ReadView, {
+    entry: view.entry,
+    projects: projects,
+    onBack: () => setView(view.entry?.projectId ? {
+      name: "project",
+      id: view.entry.projectId
+    } : {
+      name: "home"
+    }),
+    onEdit: () => setView({
+      name: "edit",
+      entry: view.entry
+    }),
+    onDelete: async id => {
+      await deleteEntry(id);
+      showToast("삭제됨");
+      setView(view.entry?.projectId ? {
+        name: "project",
+        id: view.entry.projectId
+      } : {
+        name: "home"
+      });
+    }
+  }), view.name === "edit" && /*#__PURE__*/React.createElement(EditView, {
+    entry: view.entry,
+    projects: projects,
+    onBack: () => {
+      // 기존 기록 수정 취소 → 읽기 모드로, 새 기록이면 목록으로
+      if (view.entry && view.entry.id) setView({
+        name: "read",
+        entry: view.entry
+      });else setView(view.entry && view.entry.projectId ? {
+        name: "project",
+        id: view.entry.projectId
+      } : {
+        name: "home"
+      });
+    },
+    onSave: async e => {
+      await saveEntry(e);
+      showToast("저장됨");
+      setView({
+        name: "read",
+        entry: e
+      });
+    },
+    onDelete: async id => {
+      await deleteEntry(id);
+      showToast("삭제됨");
+      setView({
+        name: "home"
+      });
+    }
+  }), toast && /*#__PURE__*/React.createElement("div", {
+    className: "toast"
+  }, toast));
+}
+
+// ── Calendar ───────────────────────────────────────────────────
+function Calendar({
+  entries,
+  todos,
+  projects,
+  onPickDay
+}) {
+  const [cur, setCur] = useState(() => {
+    const d = new Date();
+    return {
+      y: d.getFullYear(),
+      m: d.getMonth()
+    };
+  });
+  const today = todayStr();
+  const {
+    workDays,
+    dueMap
+  } = useMemo(() => {
+    const w = new Set(),
+      dm = {};
+    const pname = id => catName(id, projects);
+    for (const e of entries) {
+      if (e.date) w.add(e.date);
+      if (e.due) (dm[e.due] = dm[e.due] || []).push({
+        title: e.title,
+        proj: pname(e.projectId),
+        done: false
+      });
+    }
+    for (const t of todos) {
+      if (t.date) (dm[t.date] = dm[t.date] || []).push({
+        title: t.title,
+        proj: null,
+        done: t.done
+      });
+    }
+    return {
+      workDays: w,
+      dueMap: dm
+    };
+  }, [entries, todos, projects]);
+  const cells = useMemo(() => {
+    const first = new Date(cur.y, cur.m, 1);
+    const startWd = first.getDay();
+    const days = new Date(cur.y, cur.m + 1, 0).getDate();
+    const arr = [];
+    for (let i = 0; i < startWd; i++) arr.push(null);
+    for (let d = 1; d <= days; d++) arr.push(d);
+    while (arr.length % 7 !== 0) arr.push(null);
+    return arr;
+  }, [cur]);
+  const fmt = d => `${cur.y}-${String(cur.m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const shift = n => setCur(c => {
+    const nd = new Date(c.y, c.m + n, 1);
+    return {
+      y: nd.getFullYear(),
+      m: nd.getMonth()
+    };
+  });
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "calhead"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => shift(-1)
+  }, "‹"), /*#__PURE__*/React.createElement("span", {
+    className: "mo"
+  }, cur.y, ". ", String(cur.m + 1).padStart(2, "0")), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "today",
+    onClick: () => {
+      const d = new Date();
+      setCur({
+        y: d.getFullYear(),
+        m: d.getMonth()
+      });
+    }
+  }, "오늘"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => shift(1)
+  }, "›"))), /*#__PURE__*/React.createElement("div", {
+    className: "grid"
+  }, WD.map((w, i) => /*#__PURE__*/React.createElement("div", {
+    key: w,
+    className: "wd",
+    style: i === 0 ? {
+      color: "#000"
+    } : {}
+  }, w)), cells.map((d, i) => {
+    if (!d) return /*#__PURE__*/React.createElement("div", {
+      key: i,
+      className: "cell empty"
+    });
+    const ds = fmt(d);
+    const isToday = ds === today;
+    const hasWork = workDays.has(ds);
+    const dues = dueMap[ds] || [];
+    const isSun = i % 7 === 0;
+    return /*#__PURE__*/React.createElement("button", {
+      key: i,
+      className: `cell${isToday ? " today" : ""}${isSun ? " sun" : ""}`,
+      onClick: () => onPickDay(ds)
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "dnum"
+    }, hasWork && /*#__PURE__*/React.createElement("span", {
+      className: "dot work"
+    }), d), dues.length > 0 && /*#__PURE__*/React.createElement("span", {
+      className: "duelist"
+    }, dues.slice(0, 2).map((x, k) => /*#__PURE__*/React.createElement("span", {
+      key: k,
+      className: "duechip" + (x.done ? " done" : "")
+    }, x.proj && /*#__PURE__*/React.createElement("b", {
+      className: "dproj"
+    }, "[", x.proj, "]"), x.title)), dues.length > 2 && /*#__PURE__*/React.createElement("span", {
+      className: "duemore"
+    }, "+", dues.length - 2)));
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "legend"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "dot work"
+  }), " 한 일"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "duechip",
+    style: {
+      maxWidth: "none"
+    }
+  }, "마감"), " 마감 · 할 일")));
+}
+
+// ── Day panel ──────────────────────────────────────────────────
+function DayPanel({
+  date,
+  entries,
+  todos,
+  onOpenEntry,
+  onNewEntry,
+  onToggleTodo,
+  onAddTodo,
+  onDeleteTodo,
+  onClose
+}) {
+  const [txt, setTxt] = useState("");
+  const dayEntries = entries.filter(e => e.date === date);
+  const dayDues = entries.filter(e => e.due === date);
+  const dayTodos = todos.filter(t => t.date === date);
+  const [yy, mm, dd] = date.split("-");
+  const wd = WD[new Date(+yy, +mm - 1, +dd).getDay()];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "daypanel"
+  }, /*#__PURE__*/React.createElement("h3", null, +mm, "월 ", +dd, "일 (", wd, ")"), dayEntries.length === 0 && dayDues.length === 0 && dayTodos.length === 0 && /*#__PURE__*/React.createElement("p", {
+    className: "starnote",
+    style: {
+      marginTop: 0
+    }
+  }, "이 날짜에 기록이 없어요."), dayEntries.map(e => /*#__PURE__*/React.createElement("div", {
+    key: e.id,
+    className: "di",
+    onClick: () => onOpenEntry(e)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ic"
+  }, "한 일"), /*#__PURE__*/React.createElement("span", {
+    className: "tt"
+  }, e.title))), dayDues.map(e => /*#__PURE__*/React.createElement("div", {
+    key: "d" + e.id,
+    className: "di",
+    onClick: () => onOpenEntry(e)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ic due"
+  }, "마감"), /*#__PURE__*/React.createElement("span", {
+    className: "tt"
+  }, e.title))), dayTodos.map(t => /*#__PURE__*/React.createElement("div", {
+    key: t.id,
+    className: "di" + (t.done ? " done" : "")
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "chk",
+    onClick: () => onToggleTodo(t.id)
+  }, t.done ? "✓" : ""), /*#__PURE__*/React.createElement("span", {
+    className: "tt",
+    onClick: () => onToggleTodo(t.id)
+  }, t.title), /*#__PURE__*/React.createElement("span", {
+    style: {
+      cursor: "pointer",
+      color: "#8c8c8c",
+      fontSize: 13
+    },
+    onClick: () => onDeleteTodo(t.id)
+  }, "✕"))), /*#__PURE__*/React.createElement("div", {
+    className: "quickadd"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: "할 일 / 마감 빠르게 추가",
+    value: txt,
+    onChange: e => setTxt(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter" && txt.trim()) {
+        onAddTodo(date, txt.trim());
+        setTxt("");
+      }
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    onClick: () => {
+      if (txt.trim()) {
+        onAddTodo(date, txt.trim());
+        setTxt("");
+      }
+    }
+  }, "추가")), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: () => onNewEntry(date)
+  }, "이 날짜로 업무 기록 작성"), /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: onClose
+  }, "닫기")));
+}
+
+// ── Home ───────────────────────────────────────────────────────
+function HomeView({
+  projects,
+  entries,
+  todos,
+  onOpenProject,
+  onAddProject,
+  onNewEntry,
+  onToggleTodo,
+  onAddTodo,
+  onDeleteTodo,
+  onOpenEntry,
+  onExportJSON,
+  onExportText,
+  onImportJSON
+}) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [pickedDay, setPickedDay] = useState(null);
+  const countByProject = useMemo(() => {
+    const m = {};
+    for (const e of entries) m[e.projectId] = (m[e.projectId] || 0) + 1;
+    return m;
+  }, [entries]);
+  const upcoming = useMemo(() => {
+    const t = todayStr();
+    const pname = id => catName(id, projects);
+    const items = [];
+    for (const e of entries) if (e.due && e.due >= t) items.push({
+      date: e.due,
+      title: e.title,
+      proj: pname(e.projectId),
+      kind: "마감"
+    });
+    for (const td of todos) if (!td.done && td.date >= t) items.push({
+      date: td.date,
+      title: td.title,
+      proj: null,
+      kind: "할 일"
+    });
+    return items.sort((a, b) => a.date < b.date ? -1 : 1).slice(0, 5);
+  }, [entries, todos, projects]);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", {
+    className: "sec"
+  }, "달력"), /*#__PURE__*/React.createElement(Calendar, {
+    entries: entries,
+    todos: todos,
+    projects: projects,
+    onPickDay: setPickedDay
+  }), pickedDay && /*#__PURE__*/React.createElement(DayPanel, {
+    date: pickedDay,
+    entries: entries,
+    todos: todos,
+    onOpenEntry: onOpenEntry,
+    onNewEntry: onNewEntry,
+    onToggleTodo: onToggleTodo,
+    onAddTodo: onAddTodo,
+    onDeleteTodo: onDeleteTodo,
+    onClose: () => setPickedDay(null)
+  }), upcoming.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", {
+    className: "sec"
+  }, "다가오는 마감 · 할 일"), upcoming.map((u, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "entry",
+    onClick: () => setPickedDay(u.date)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "et"
+  }, u.proj && /*#__PURE__*/React.createElement("b", null, "[", u.proj, "] "), u.title), /*#__PURE__*/React.createElement("div", {
+    className: "ed"
+  }, /*#__PURE__*/React.createElement("span", null, u.date), /*#__PURE__*/React.createElement("span", {
+    className: "duetag"
+  }, u.kind))))), /*#__PURE__*/React.createElement("h2", {
+    className: "sec"
+  }, "프로젝트"), /*#__PURE__*/React.createElement("div", {
+    className: "pcards"
+  }, projects.map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.id,
+    className: "pcard",
+    onClick: () => onOpenProject(p.id)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pn"
+  }, p.name), p.desc && /*#__PURE__*/React.createElement("div", {
+    className: "pdesc"
+  }, p.desc), /*#__PURE__*/React.createElement("div", {
+    className: "pc"
+  }, "기록 ", countByProject[p.id] || 0, "개"))), !adding && /*#__PURE__*/React.createElement("button", {
+    className: "addp",
+    onClick: () => setAdding(true)
+  }, "+ 프로젝트 추가"), adding && /*#__PURE__*/React.createElement("div", {
+    className: "pcard",
+    style: {
+      cursor: "default"
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    autoFocus: true,
+    placeholder: "프로젝트 이름",
+    value: name,
+    onChange: e => setName(e.target.value)
+  }), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: "한 줄 설명 (선택)",
+    value: desc,
+    onChange: e => setDesc(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter" && name.trim()) {
+        onAddProject({
+          id: uid(),
+          name: name.trim(),
+          desc: desc.trim()
+        });
+        setName("");
+        setDesc("");
+        setAdding(false);
+      }
+    },
+    style: {
+      marginTop: 8
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    onClick: () => {
+      if (!name.trim()) return;
+      onAddProject({
+        id: uid(),
+        name: name.trim(),
+        desc: desc.trim()
+      });
+      setName("");
+      setDesc("");
+      setAdding(false);
+    }
+  }, "추가"), /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: () => {
+      setAdding(false);
+      setName("");
+      setDesc("");
+    }
+  }, "취소")))), projects.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "아직 프로젝트가 없어요.", /*#__PURE__*/React.createElement("br", null), "위에서 프로젝트를 먼저 추가해 보세요."), /*#__PURE__*/React.createElement("h2", {
+    className: "sec"
+  }, "기록 분류"), /*#__PURE__*/React.createElement("div", {
+    className: "pcards"
+  }, FIXED.map(f => /*#__PURE__*/React.createElement("button", {
+    key: f.id,
+    className: "pcard fixedcard",
+    onClick: () => onOpenProject(f.id)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pn"
+  }, f.name), /*#__PURE__*/React.createElement("div", {
+    className: "pc"
+  }, "기록 ", countByProject[f.id] || 0, "개")))), /*#__PURE__*/React.createElement("h2", {
+    className: "sec personal"
+  }, "개인"), /*#__PURE__*/React.createElement("div", {
+    className: "pcards"
+  }, PERSONAL.map(f => /*#__PURE__*/React.createElement("button", {
+    key: f.id,
+    className: "pcard personalcard",
+    onClick: () => onOpenProject(f.id)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pn"
+  }, f.name), /*#__PURE__*/React.createElement("div", {
+    className: "pc"
+  }, "기록 ", countByProject[f.id] || 0, "개")))), /*#__PURE__*/React.createElement("h2", {
+    className: "sec"
+  }, "백업 · 내보내기"), /*#__PURE__*/React.createElement("p", {
+    className: "starnote"
+  }, "기기를 바꾸거나 기록이 보이지 않을 때를 대비해, 가끔 '전체 백업'으로 파일을 받아두세요. 다른 기기에서는 그 파일을 '백업 불러오기'로 올리면 기록이 복원됩니다."), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: onExportText
+  }, "자소서용 텍스트 (.txt)"), /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: onExportJSON
+  }, "전체 백업 (.json)"), /*#__PURE__*/React.createElement("label", {
+    className: "btn ghost",
+    style: {
+      cursor: "pointer",
+      marginBottom: 0
+    }
+  }, "백업 불러오기", /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "application/json,.json",
+    style: {
+      display: "none"
+    },
+    onChange: e => {
+      onImportJSON(e.target.files[0]);
+      e.target.value = "";
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "fab"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    onClick: () => onNewEntry()
+  }, "+ 새 기록")));
+}
+
+// ── Project ────────────────────────────────────────────────────
+function ProjectView({
+  project,
+  fixed,
+  entries,
+  files,
+  onSaveFiles,
+  onBack,
+  onOpenEntry,
+  onNewEntry,
+  onRename,
+  onDeleteProject
+}) {
+  const [editingName, setEditingName] = useState(false);
+  const [name, setName] = useState(project?.name || "");
+  const [desc, setDesc] = useState(project?.desc || "");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkName, setLinkName] = useState("");
+  const [busy, setBusy] = useState("");
+  const pid = project?.id;
+  const persistFiles = useCallback(async next => {
+    try {
+      await onSaveFiles(next);
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }, [onSaveFiles]);
+  const onUpload = useCallback(async file => {
+    if (!file) return;
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      setBusy("PDF 파일만 업로드할 수 있어요.");
+      setTimeout(() => setBusy(""), 2200);
+      return;
+    }
+    // ~3.7MB raw limit (base64 ~33% larger)
+    if (file.size > 3.7 * 1024 * 1024) {
+      setBusy("파일이 너무 커요 (약 3.5MB 이하만 가능). 링크로 추가해 보세요.");
+      setTimeout(() => setBusy(""), 3200);
+      return;
+    }
+    setBusy("업로드 중…");
+    try {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(new Error("read fail"));
+        r.readAsDataURL(file);
+      });
+      const item = {
+        id: uid(),
+        kind: "file",
+        name: file.name,
+        data: dataUrl,
+        size: file.size,
+        addedAt: todayStr()
+      };
+      const ok = await persistFiles([item, ...files]);
+      setBusy(ok ? "" : "저장 실패 (용량 초과일 수 있어요)");
+      if (!ok) setTimeout(() => setBusy(""), 2600);
+    } catch {
+      setBusy("업로드 실패");
+      setTimeout(() => setBusy(""), 2200);
+    }
+  }, [files, persistFiles]);
+  const addLink = useCallback(async () => {
+    let url = linkUrl.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+    const item = {
+      id: uid(),
+      kind: "link",
+      name: linkName.trim() || url,
+      url,
+      addedAt: todayStr()
+    };
+    await persistFiles([item, ...files]);
+    setLinkUrl("");
+    setLinkName("");
+  }, [linkUrl, linkName, files, persistFiles]);
+  const removeFile = useCallback(async id => {
+    await persistFiles(files.filter(f => f.id !== id));
+  }, [files, persistFiles]);
+  const dataUrlToBlob = dataUrl => {
+    const [head, b64] = dataUrl.split(",");
+    const mime = (head.match(/:(.*?);/) || [, "application/pdf"])[1];
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], {
+      type: mime
+    });
+  };
+  const openFile = f => {
+    if (f.kind === "link") {
+      window.open(f.url, "_blank");
+      return;
+    }
+    try {
+      const url = URL.createObjectURL(dataUrlToBlob(f.data));
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      window.open(f.data, "_blank");
+    }
+  };
+  const downloadFile = f => {
+    try {
+      const url = URL.createObjectURL(dataUrlToBlob(f.data));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = f.name || "document.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch {
+      // 폴백: 새 탭으로 열어 사용자가 직접 저장
+      window.open(f.data, "_blank");
+    }
+  };
+  const fmtSize = b => b >= 1024 * 1024 ? (b / 1024 / 1024).toFixed(1) + "MB" : Math.round(b / 1024) + "KB";
+  if (!project) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "back",
+    onClick: onBack
+  }, "← 홈으로"), /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "프로젝트를 찾을 수 없어요."));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "back",
+    onClick: onBack
+  }, "← 홈으로"), fixed ? /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 24,
+      fontWeight: 800,
+      margin: "6px 0 2px",
+      letterSpacing: "-0.02em"
+    }
+  }, project.name) : editingName ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    value: name,
+    autoFocus: true,
+    onChange: e => setName(e.target.value),
+    placeholder: "프로젝트 이름"
+  }), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    value: desc,
+    onChange: e => setDesc(e.target.value),
+    placeholder: "한 줄 설명 (선택)",
+    style: {
+      marginTop: 8
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    onClick: () => {
+      if (name.trim()) onRename(name.trim(), desc.trim());
+      setEditingName(false);
+    }
+  }, "저장"), /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: () => {
+      setName(project.name);
+      setDesc(project.desc || "");
+      setEditingName(false);
+    }
+  }, "취소"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 24,
+      fontWeight: 800,
+      margin: "6px 0 2px",
+      letterSpacing: "-0.02em",
+      cursor: "pointer"
+    },
+    onClick: () => setEditingName(true)
+  }, project.name, " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      color: "#b0b0b0",
+      fontWeight: 500
+    }
+  }, "(클릭해 수정)")), project.desc && /*#__PURE__*/React.createElement("p", {
+    className: "pdesc-full"
+  }, project.desc)), fixed && project.id === "__news__" && /*#__PURE__*/React.createElement("p", {
+    className: "starnote",
+    style: {
+      marginTop: 4
+    }
+  }, "정기적으로 하는 뉴스스크랩을 날짜별로 쌓아두는 칸이에요. 기사 제목·대상회사·인수자·거래 요약 등을 항목별로 적어두면 됩니다."), fixed && project.id === "__etc__" && /*#__PURE__*/React.createElement("p", {
+    className: "starnote",
+    style: {
+      marginTop: 4
+    }
+  }, "특정 프로젝트에 속하지 않는 잡다한 업무를 모아두는 칸이에요."), fixed && project.id === "__study__" && /*#__PURE__*/React.createElement("p", {
+    className: "starnote",
+    style: {
+      marginTop: 4
+    }
+  }, "업무와 별개로 스스로 공부하거나 익힌 내용을 쌓아두는 칸이에요."), fixed && project.id === "__personal__" && /*#__PURE__*/React.createElement("p", {
+    className: "starnote",
+    style: {
+      marginTop: 4
+    }
+  }, "업무와 무관한 개인적인 메모나 생각을 자유롭게 남겨두는 칸이에요. 자소서용 텍스트 내보내기에는 포함되지 않아요."), /*#__PURE__*/React.createElement("h2", {
+    className: "sec"
+  }, "기록 ", entries.length, "개"), entries.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "아직 기록이 없어요.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    onClick: onNewEntry
+  }, "첫 기록 작성")), entries.map(e => /*#__PURE__*/React.createElement("div", {
+    key: e.id,
+    className: "entry",
+    onClick: () => onOpenEntry(e)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "et"
+  }, e.title), /*#__PURE__*/React.createElement("div", {
+    className: "ed"
+  }, /*#__PURE__*/React.createElement("span", null, e.date), e.due && /*#__PURE__*/React.createElement("span", {
+    className: "duetag"
+  }, "마감 ", e.due), e.skills && /*#__PURE__*/React.createElement("span", {
+    className: "tag"
+  }, e.skills.split(",")[0])))), !fixed && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", {
+    className: "sec"
+  }, "첨부 PDF"), /*#__PURE__*/React.createElement("div", {
+    className: "attachbox"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "btn primary",
+    style: {
+      cursor: "pointer",
+      marginBottom: 0
+    }
+  }, "PDF 파일 업로드", /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "application/pdf",
+    style: {
+      display: "none"
+    },
+    onChange: e => {
+      onUpload(e.target.files[0]);
+      e.target.value = "";
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "hintsmall"
+  }, "최대 약 3.5MB · 클라우드 저장")), /*#__PURE__*/React.createElement("div", {
+    className: "quickadd",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: "이름 (선택)",
+    value: linkName,
+    onChange: e => setLinkName(e.target.value),
+    style: {
+      flex: "0 0 32%"
+    }
+  }), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: "PDF 링크 URL 붙여넣기",
+    value: linkUrl,
+    onChange: e => setLinkUrl(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter") addLink();
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: addLink
+  }, "링크 추가")), busy && /*#__PURE__*/React.createElement("p", {
+    className: "hintsmall",
+    style: {
+      marginTop: 10,
+      color: "#000",
+      fontWeight: 600
+    }
+  }, busy)), files.length === 0 && /*#__PURE__*/React.createElement("p", {
+    className: "starnote"
+  }, "아직 첨부한 PDF가 없어요. 작은 파일은 업로드하고, 큰 파일은 클라우드 링크로 추가하세요."), files.map(f => /*#__PURE__*/React.createElement("div", {
+    key: f.id,
+    className: "fileitem"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "fic"
+  }, f.kind === "link" ? "링크" : "PDF"), /*#__PURE__*/React.createElement("span", {
+    className: "fname",
+    onClick: () => openFile(f)
+  }, f.name), f.kind === "file" && /*#__PURE__*/React.createElement("span", {
+    className: "fmeta"
+  }, fmtSize(f.size)), /*#__PURE__*/React.createElement("span", {
+    className: "factions"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => openFile(f)
+  }, "열기"), f.kind === "file" && /*#__PURE__*/React.createElement("button", {
+    onClick: () => downloadFile(f)
+  }, "받기"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => removeFile(f.id)
+  }, "삭제"))))), !fixed && /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 28
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn danger",
+    onClick: onDeleteProject
+  }, "프로젝트 삭제")), /*#__PURE__*/React.createElement("div", {
+    className: "fab"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    onClick: onNewEntry
+  }, "+ 새 기록")));
+}
+
+// ── Read (읽기 모드) ───────────────────────────────────────────
+function ReadView({
+  entry,
+  projects,
+  onBack,
+  onEdit,
+  onDelete
+}) {
+  if (!entry) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "back",
+    onClick: onBack
+  }, "← 돌아가기"), /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "기록을 찾을 수 없어요."));
+  const isFree = isFreeform(entry.projectId);
+  const isNews = entry.projectId === "__news__";
+  const cat = catName(entry.projectId, projects);
+  const skillList = (entry.skills || "").split(",").map(s => s.trim()).filter(Boolean);
+  const Field = ({
+    label,
+    value
+  }) => value ? /*#__PURE__*/React.createElement("div", {
+    className: "rfield"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rlabel"
+  }, label), /*#__PURE__*/React.createElement("div", {
+    className: "rvalue"
+  }, value)) : null;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "back",
+    onClick: onBack
+  }, "← 돌아가기"), /*#__PURE__*/React.createElement("div", {
+    className: "rmeta"
+  }, cat && /*#__PURE__*/React.createElement("span", {
+    className: "rcat"
+  }, cat), /*#__PURE__*/React.createElement("span", null, entry.date), entry.due && /*#__PURE__*/React.createElement("span", {
+    className: "duetag"
+  }, "마감 ", entry.due)), /*#__PURE__*/React.createElement("h2", {
+    className: "rtitle"
+  }, entry.title), isFree ? /*#__PURE__*/React.createElement(Field, {
+    label: "내용",
+    value: entry.note
+  }) : isNews ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Field, {
+    label: "대상회사",
+    value: entry.company
+  }), /*#__PURE__*/React.createElement(Field, {
+    label: "대상회사 개요",
+    value: entry.companyOverview
+  }), /*#__PURE__*/React.createElement(Field, {
+    label: "인수자",
+    value: entry.acquirer
+  }), /*#__PURE__*/React.createElement(Field, {
+    label: "거래 요약",
+    value: entry.dealSummary
+  }), entry.link && /*#__PURE__*/React.createElement("div", {
+    className: "rfield"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rlabel"
+  }, "기사 링크"), /*#__PURE__*/React.createElement("div", {
+    className: "rvalue"
+  }, /*#__PURE__*/React.createElement("a", {
+    className: "rlink",
+    href: entry.link,
+    target: "_blank",
+    rel: "noreferrer"
+  }, entry.link)))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Field, {
+    label: "맡은 일",
+    value: entry.task
+  }), /*#__PURE__*/React.createElement(Field, {
+    label: "결과",
+    value: entry.result
+  }), /*#__PURE__*/React.createElement(Field, {
+    label: "피드백",
+    value: entry.feedback
+  }), /*#__PURE__*/React.createElement(Field, {
+    label: "느낀 점",
+    value: entry.learned
+  }), skillList.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rfield"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rlabel"
+  }, "역량 키워드"), /*#__PURE__*/React.createElement("div", {
+    className: "rskills"
+  }, skillList.map((s, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "tag"
+  }, s))))), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 28
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    onClick: onEdit
+  }, "수정"), /*#__PURE__*/React.createElement("button", {
+    className: "btn danger",
+    onClick: () => onDelete(entry.id)
+  }, "삭제"), /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: onBack
+  }, "목록으로")));
+}
+
+// ── Edit ───────────────────────────────────────────────────────
+function EditView({
+  entry,
+  projects,
+  onBack,
+  onSave,
+  onDelete
+}) {
+  const isNew = !entry || !entry.id;
+  const [form, setForm] = useState(() => ({
+    id: entry?.id || uid(),
+    projectId: entry?.projectId || FIXED[0].id,
+    date: entry?.date || todayStr(),
+    due: entry?.due || "",
+    title: entry?.title || "",
+    task: entry?.task || "",
+    result: entry?.result || "",
+    feedback: entry?.feedback || "",
+    learned: entry?.learned || "",
+    note: entry?.note || "",
+    skills: entry?.skills || "",
+    // 뉴스스크랩 전용
+    company: entry?.company || "",
+    companyOverview: entry?.companyOverview || "",
+    acquirer: entry?.acquirer || "",
+    dealSummary: entry?.dealSummary || "",
+    link: entry?.link || ""
+  }));
+  const set = k => e => setForm(f => ({
+    ...f,
+    [k]: e.target.value
+  }));
+  const isFree = isFreeform(form.projectId);
+  const isNews = form.projectId === "__news__";
+  const canSave = form.title.trim() && form.projectId;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "back",
+    onClick: onBack
+  }, "← 돌아가기"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 22,
+      fontWeight: 800,
+      margin: "6px 0 4px",
+      letterSpacing: "-0.02em"
+    }
+  }, isNew ? "새 기록" : "기록 수정"), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "분류"), /*#__PURE__*/React.createElement("select", {
+    className: "f",
+    value: form.projectId,
+    onChange: set("projectId")
+  }, /*#__PURE__*/React.createElement("optgroup", {
+    label: "분류"
+  }, FIXED.map(f => /*#__PURE__*/React.createElement("option", {
+    key: f.id,
+    value: f.id
+  }, f.name))), projects.length > 0 && /*#__PURE__*/React.createElement("optgroup", {
+    label: "프로젝트"
+  }, projects.map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.id,
+    value: p.id
+  }, p.name))), /*#__PURE__*/React.createElement("optgroup", {
+    label: "개인"
+  }, PERSONAL.map(f => /*#__PURE__*/React.createElement("option", {
+    key: f.id,
+    value: f.id
+  }, f.name)))), /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 140
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "한 날짜"), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    type: "date",
+    value: form.date,
+    onChange: set("date")
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 140
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "마감일 ", /*#__PURE__*/React.createElement("span", {
+    className: "hint"
+  }, "선택")), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    type: "date",
+    value: form.due,
+    onChange: set("due")
+  }))), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, isNews ? "기사 제목" : "제목"), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: isNews ? "예: A사, B사 경영권 인수" : "예: 신규 고객 온보딩 자료 개편",
+    value: form.title,
+    onChange: set("title")
+  }), isFree ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "내용 ", /*#__PURE__*/React.createElement("span", {
+    className: "hint"
+  }, "자유롭게 입력")), /*#__PURE__*/React.createElement("textarea", {
+    className: "f",
+    style: {
+      minHeight: 180
+    },
+    placeholder: form.projectId === "__personal__" ? "자유롭게 적어두세요." : "공부한 내용을 자유롭게 적어두세요.",
+    value: form.note,
+    onChange: set("note")
+  })) : isNews ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "대상회사"), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: "인수 대상이 된 회사",
+    value: form.company,
+    onChange: set("company")
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "대상회사 개요"), /*#__PURE__*/React.createElement("textarea", {
+    className: "f",
+    placeholder: "업종·규모·주요 사업 등",
+    value: form.companyOverview,
+    onChange: set("companyOverview")
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "인수자"), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: "인수하는 주체",
+    value: form.acquirer,
+    onChange: set("acquirer")
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "거래 요약"), /*#__PURE__*/React.createElement("textarea", {
+    className: "f",
+    placeholder: "거래 구조·금액·배경 등",
+    value: form.dealSummary,
+    onChange: set("dealSummary")
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "기사 링크"), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: "https://",
+    value: form.link,
+    onChange: set("link")
+  })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("p", {
+    className: "starnote"
+  }, "자소서에 그대로 옮길 수 있게 항목별로 나눠 적어두면 편해요. 빈 칸은 비워둬도 됩니다."), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "맡은 일 ", /*#__PURE__*/React.createElement("span", {
+    className: "hint"
+  }, "무엇을 했나")), /*#__PURE__*/React.createElement("textarea", {
+    className: "f",
+    value: form.task,
+    onChange: set("task")
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "결과 ", /*#__PURE__*/React.createElement("span", {
+    className: "hint"
+  }, "성과·수치")), /*#__PURE__*/React.createElement("textarea", {
+    className: "f",
+    value: form.result,
+    onChange: set("result")
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "피드백 ", /*#__PURE__*/React.createElement("span", {
+    className: "hint"
+  }, "받은 의견")), /*#__PURE__*/React.createElement("textarea", {
+    className: "f",
+    value: form.feedback,
+    onChange: set("feedback")
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "느낀 점 ", /*#__PURE__*/React.createElement("span", {
+    className: "hint"
+  }, "배운 점·소감")), /*#__PURE__*/React.createElement("textarea", {
+    className: "f",
+    value: form.learned,
+    onChange: set("learned")
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "f"
+  }, "역량 키워드 ", /*#__PURE__*/React.createElement("span", {
+    className: "hint"
+  }, "쉼표로 구분")), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    placeholder: "예: 데이터분석, 협업, 문제해결",
+    value: form.skills,
+    onChange: set("skills")
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 24
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    disabled: !canSave,
+    onClick: () => onSave(form)
+  }, "저장"), !isNew && /*#__PURE__*/React.createElement("button", {
+    className: "btn danger",
+    onClick: () => onDelete(form.id)
+  }, "삭제"), /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: onBack
+  }, "취소")));
+}
+
+// ── 비밀 키(공간) 입력 화면 ────────────────────────────────────
+function SpaceGate({
+  onEnter,
+  css,
+  errMsg
+}) {
+  const [val, setVal] = useState("");
+  const [mode, setMode] = useState("choose"); // choose | enter | create
+
+  const genKey = () => {
+    // 추측 어려운 키 생성
+    const rnd = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 16);
+    return `space_${rnd}`;
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "wrap"
+  }, /*#__PURE__*/React.createElement("style", null, css), /*#__PURE__*/React.createElement("div", {
+    className: "topbar"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "brand"
+  }, "인턴 기록")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 460,
+      margin: "40px auto 0"
+    }
+  }, errMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1.5px solid #0d0d0d",
+      padding: "12px 14px",
+      marginBottom: 18,
+      fontSize: 13,
+      lineHeight: 1.6,
+      whiteSpace: "pre-wrap"
+    }
+  }, errMsg), mode === "choose" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 22,
+      fontWeight: 800,
+      letterSpacing: "-0.02em",
+      margin: "0 0 10px"
+    }
+  }, "내 기록 공간 열기"), /*#__PURE__*/React.createElement("p", {
+    className: "starnote",
+    style: {
+      marginTop: 0
+    }
+  }, "이 앱은 '공간 키'로 내 기록을 어디서든 불러옵니다. 처음이라면 새 공간을 만들고, 이미 키가 있다면 그 키로 들어오세요. 키는 이 기기에 기억되니 다음부터는 자동으로 열려요."), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 20
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    onClick: () => {
+      setVal(genKey());
+      setMode("create");
+    }
+  }, "새 공간 만들기"), /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: () => setMode("enter")
+  }, "기존 키로 들어가기"))), mode === "create" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "back",
+    onClick: () => setMode("choose")
+  }, "← 뒤로"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 20,
+      fontWeight: 800,
+      margin: "6px 0 8px"
+    }
+  }, "새 공간 키"), /*#__PURE__*/React.createElement("p", {
+    className: "starnote",
+    style: {
+      marginTop: 0
+    }
+  }, "아래가 내 공간 키예요. ", /*#__PURE__*/React.createElement("b", null, "이 키를 꼭 메모해 두세요."), " 다른 기기(휴대폰 등)에서 이 키로 들어오면 같은 기록이 보입니다. 키를 잃어버리면 기록을 다시 찾을 수 없어요."), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    value: val,
+    onChange: e => setVal(e.target.value),
+    style: {
+      fontSize: 16,
+      fontWeight: 700
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn ghost",
+    onClick: () => {
+      navigator.clipboard?.writeText(val);
+    }
+  }, "키 복사")), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 18
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    disabled: !val.trim(),
+    onClick: () => onEnter(val.trim())
+  }, "이 키로 시작하기"))), mode === "enter" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "back",
+    onClick: () => setMode("choose")
+  }, "← 뒤로"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 20,
+      fontWeight: 800,
+      margin: "6px 0 8px"
+    }
+  }, "공간 키 입력"), /*#__PURE__*/React.createElement("p", {
+    className: "starnote",
+    style: {
+      marginTop: 0
+    }
+  }, "다른 기기에서 만든 공간 키를 그대로 입력하세요."), /*#__PURE__*/React.createElement("input", {
+    className: "f",
+    autoFocus: true,
+    placeholder: "space_...",
+    value: val,
+    onChange: e => setVal(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter" && val.trim()) onEnter(val.trim());
+    },
+    style: {
+      fontSize: 16
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      marginTop: 18
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn primary",
+    disabled: !val.trim(),
+    onClick: () => onEnter(val.trim())
+  }, "들어가기")))));
+}
+//==== 컴파일된 앱 코드 끝 ====
+    var rootEl = document.getElementById("root");
+    rootEl.innerHTML = "";
+    window.__mounted = true;
+    ReactDOM.createRoot(rootEl).render(React.createElement(InternLog));
+  } catch (err) {
+    window.__bootError((err && err.message ? err.message : String(err)) + "\n\n" + (err && err.stack ? err.stack.split("\n").slice(0,4).join("\n") : ""));
+    if (window.console) console.error(err);
+  }
+})();
+</script>
+</body>
+</html>
